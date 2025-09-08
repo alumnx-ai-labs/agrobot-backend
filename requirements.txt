@@ -1,5 +1,5 @@
 # ============================================================================
-# Crop Disease Analysis API - Core Dependencies
+# Crop Disease Analysis API - Dependencies
 # ============================================================================
 
 # Core FastAPI and web server dependencies
@@ -7,27 +7,53 @@ fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 
-# LangGraph workflow orchestration
+# LangGraph and LangChain dependencies
 langgraph>=0.0.63
+langchain-core>=0.1.52
 
 # Image processing and computer vision
 Pillow>=10.1.0
+opencv-python>=4.8.1.78
 numpy>=1.24.3
 
 # Machine Learning and Deep Learning
 tensorflow>=2.13.0
+keras>=2.13.1
 
-# MongoDB async driver
-motor>=3.3.2
+# Text embeddings and NLP
+sentence-transformers>=2.2.2
+transformers>=4.35.2
 
-# Data models and validation
+# MongoDB and database dependencies
+motor>=3.3.2  # Async MongoDB driver
+pymongo>=4.6.0
+
+# Type annotations and utilities
+typing-extensions>=4.8.0
 pydantic>=2.5.0
 
-# Google AI Integration for text embeddings and generation
+# Environment and configuration
+python-dotenv>=1.0.0
+
+# Async operations and HTTP
+aiofiles>=23.2.1
+httpx>=0.25.2
+
+# Logging and monitoring
+structlog>=23.2.0
+prometheus-client>=0.19.0
+
+# Data processing
+pandas>=2.1.3
+
+# Optional: Cloud AI Services (uncomment if needed)
+# ============================================================================
+
+# Google AI Integration  
 google-generativeai>=0.3.2
 langchain-google-genai>=0.0.5
 
-# Environment configuration
-python-dotenv>=1.0.0
+# Hugging Face Integration
+# huggingface-hub>=0.19.4
 
 

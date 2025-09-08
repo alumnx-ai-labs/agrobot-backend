@@ -1,0 +1,10 @@
+{
+    "Anthracnose": 0,
+    "Bacterial Canker": 1,
+    "Cutting Weevil": 2,
+    "Die Back": 3,
+    "Gall Midge": 4,
+    "Healthy": 5,
+    "Powdery Mildew": 6,
+    "Sooty Mould": 7
+}

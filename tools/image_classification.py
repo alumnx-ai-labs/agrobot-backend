@@ -36,8 +36,8 @@ class ImageClassificationTool:
         # Default model configurations
         self.model_config = {
             "default": {
-                "model_path": os.getenv("MOBILENET_MODEL_PATH", "ml-models/crop_disease_mobilenet.h5"),
-                "labels_path": os.getenv("CLASS_LABELS_PATH", "ml-models/class_labels.json")
+                "model_path": os.getenv("MOBILENET_MODEL_PATH", "ml-models/8-disease-model.h5"),
+                "labels_path": os.getenv("CLASS_LABELS_PATH", "ml-models/class_idx.json")
             }
         }
         
