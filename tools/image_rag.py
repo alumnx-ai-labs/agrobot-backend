@@ -2,12 +2,16 @@ import os
 import logging
 import base64
 import numpy as np
+import asyncio
 from io import BytesIO
 from PIL import Image
-from typing import List, Optional
-import asyncio
-from motor.motor_asyncio import AsyncIOMotorClient
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
+import torch
+from transformers import CLIPProcessor, CLIPModel
+
+from pinecone import Pinecone, ServerlessSpec
+# Removed the import for GoogleGenerativeAIEmbeddings
 
 logger = logging.getLogger(__name__)
 
@@ -22,236 +26,148 @@ class ImageRAGResult:
     crop_type: str
     sme_related: str
 
+# Custom class for CLIP embeddings, similar to the ingestion script
+class CLIPEmbeddings:
+    def __init__(self):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    def embed_image(self, image_data: str) -> List[float]:
+        """Generates an embedding for an image from a base64 string."""
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(BytesIO(image_bytes)).convert("RGB")
+        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            image_features = self.model.get_image_features(**inputs)
+        return image_features.cpu().numpy().flatten().tolist()
+
 class ImageRAGTool:
     """
-    ImageRAG tool for finding similar disease images using MongoDB vector search
-    Filters by crop type and uses image embeddings for similarity matching
+    ImageRAG tool for finding similar disease images using Pinecone vector search.
+    Filters by crop type and uses image embeddings for similarity matching.
     """
     
     def __init__(self):
-        """Initialize the ImageRAG tool"""
-        self.mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
-        self.image_embedding_model = os.getenv("IMAGE_EMBEDDING_MODEL", "placeholder_image_model")
+        """Initialize the ImageRAG tool with Pinecone and embedding components."""
+        self.pinecone_api_key = os.getenv("PINECONE_API_KEY", "pcsk_6o3mJh_Jiw2umo4cxcjq5kqNqov4NRgXV9SfkkDGbq2n3RbKiuHaztoqiDMJW1utqoivLf")
+        self.pinecone_index_name = os.getenv("PINECONE_INDEX_NAME", "alumnx-alumni")
         
-        # MongoDB connection
-        self.client = None
-        self.db = None
-        self.collection = None
+        if not self.pinecone_api_key:
+            raise ValueError("Missing required API keys: PINECONE_API_KEY.")
         
-        # Image processing parameters
-        self.input_size = (224, 224)
+        # Pinecone and embedding parameters
         self.top_k = 10  # Default number of similar images to retrieve
         self.similarity_threshold = 0.75  # Minimum similarity score
+        self.input_size = (224, 224) # Still relevant for consistency if needed
         
-        # Placeholder for embedding model (to be implemented when model is decided)
-        self.embedding_model = None
+        self.pc = None
+        self.embeddings = None
+        self.index = None
         
-        logger.info("ImageRAGTool initialized")
-    
-    async def _ensure_connection(self):
-        """Ensure MongoDB connection is established"""
-        if self.client is None:
-            self.client = AsyncIOMotorClient(self.mongodb_uri)
-            self.db = self.client.get_default_database()
-            self.collection = self.db.imagerag
-            logger.info("ImageRAG: MongoDB connection established")
-    
-    def _preprocess_image(self, image_data: str) -> Optional[np.ndarray]:
-        """
-        Preprocess base64 image data for embedding generation
-        
-        Args:
-            image_data: Base64 encoded image data
-            
-        Returns:
-            Preprocessed image array or None if processing fails
-        """
+        self._initialize_components()
+
+    def _initialize_components(self):
+        """Initialize all required components (Pinecone and Embeddings)."""
         try:
-            # Decode base64 image
-            image_bytes = base64.b64decode(image_data)
-            image = Image.open(BytesIO(image_bytes))
+            # Initialize Pinecone with the new SDK
+            self.pc = Pinecone(api_key=self.pinecone_api_key)
             
-            # Convert to RGB if necessary
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
+            # Initialize CLIP embeddings
+            self.embeddings = CLIPEmbeddings()
             
-            # Resize to standard size
-            image = image.resize(self.input_size)
-            
-            # Convert to numpy array and normalize
-            image_array = np.array(image)
-            image_array = image_array.astype(np.float32) / 255.0
-            
-            return image_array
-            
+            # Connect to the Pinecone index.
+            self.index = self.pc.Index(self.pinecone_index_name)
+
+            logger.info("Pinecone client and embeddings initialized successfully.")
         except Exception as e:
-            logger.error(f"ImageRAG: Image preprocessing failed: {str(e)}")
-            return None
-    
-    async def _generate_image_embedding(self, image_data: str) -> Optional[List[float]]:
-        """
-        Generate embedding for the input image
-        
-        Args:
-            image_data: Base64 encoded image data
-            
-        Returns:
-            Image embedding vector or None if generation fails
-        """
+            logger.error(f"Failed to initialize components: {e}")
+            raise
+
+    async def _ensure_index_exists(self):
+        """Ensure Pinecone index exists, create if not."""
         try:
-            # Preprocess image
-            processed_image = self._preprocess_image(image_data)
-            if processed_image is None:
-                return None
-            
-            # TODO: Implement actual embedding generation when model is decided
-            # This is a placeholder implementation
-            if self.embedding_model is None:
-                logger.warning("ImageRAG: No embedding model configured, using placeholder")
-                # Return a dummy embedding for testing purposes
-                return [0.1] * 512  # Placeholder 512-dimensional embedding
-            
-            # Placeholder for actual embedding generation
-            # embedding = self.embedding_model.predict(processed_image)
-            # return embedding.tolist()
-            
-            # For now, return placeholder
-            return [0.1] * 512
-            
+            existing_indexes = self.pc.list_indexes().names
+            if self.pinecone_index_name not in existing_indexes:
+                logger.info(f"Creating Pinecone index: {self.pinecone_index_name}")
+                self.pc.create_index(
+                    name=self.pinecone_index_name,
+                    dimension=512,  # Updated dimension for CLIP
+                    metric="cosine",
+                    spec=ServerlessSpec(
+                        cloud=os.getenv("PINECONE_CLOUD", "aws"),
+                        region=os.getenv("PINECONE_REGION", "us-east-1")
+                    )
+                )
+                
+                while not self.pc.describe_index(self.pinecone_index_name).status['ready']:
+                    await asyncio.sleep(1)
+                
+                logger.info(f"Index {self.pinecone_index_name} created and ready.")
+            else:
+                logger.info(f"Index {self.pinecone_index_name} already exists.")
         except Exception as e:
-            logger.error(f"ImageRAG: Embedding generation failed: {str(e)}")
-            return None
-    
+            logger.error(f"Error ensuring index exists: {e}")
+            raise
+
+    # The _preprocess_image and _generate_image_embedding methods are now simplified
+    # to use the new CLIPEmbeddings class directly.
+
     async def _vector_search(self, query_embedding: List[float], crop_type: str, top_k: int = None) -> List[dict]:
         """
-        Perform vector similarity search in MongoDB
-        
-        Args:
-            query_embedding: Query image embedding
-            crop_type: Crop type for filtering
-            top_k: Number of results to return
-            
-        Returns:
-            List of similar images with metadata
+        Perform vector similarity search in Pinecone.
         """
         try:
             if top_k is None:
                 top_k = self.top_k
             
-            # MongoDB vector search pipeline with crop type filtering
-            pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": "image_vector_index",  # Assumes vector index is created
-                        "path": "embedding",
-                        "queryVector": query_embedding,
-                        "numCandidates": 100,
-                        "limit": top_k * 2  # Get more candidates for filtering
-                    }
-                },
-                {
-                    "$match": {
-                        "cropType": crop_type
-                    }
-                },
-                {
-                    "$addFields": {
-                        "similarity_score": {"$meta": "vectorSearchScore"}
-                    }
-                },
-                {
-                    "$match": {
-                        "similarity_score": {"$gte": self.similarity_threshold}
-                    }
-                },
-                {
-                    "$limit": top_k
-                },
-                {
-                    "$project": {
-                        "embedding": 0  # Exclude embedding from results to save bandwidth
-                    }
+            search_results = self.index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                include_metadata=True,
+                filter={
+                    "cropType": {"$eq": crop_type}
                 }
-            ]
+            )
             
-            # Execute aggregation pipeline
-            cursor = self.collection.aggregate(pipeline)
-            results = await cursor.to_list(length=top_k)
-            
+            results = []
+            for match in search_results.matches:
+                if match.score >= self.similarity_threshold:
+                    result_doc = match.metadata
+                    result_doc["similarity_score"] = match.score
+                    results.append(result_doc)
+
             logger.info(f"ImageRAG: Vector search returned {len(results)} similar images for crop type: {crop_type}")
             return results
             
         except Exception as e:
             logger.error(f"ImageRAG: Vector search failed: {str(e)}")
-            # Fallback to text-based search if vector search fails
-            return await self._fallback_text_search(crop_type, top_k)
-    
-    async def _fallback_text_search(self, crop_type: str, top_k: int) -> List[dict]:
-        """
-        Fallback text-based search when vector search fails
-        
-        Args:
-            crop_type: Crop type for filtering
-            top_k: Number of results to return
-            
-        Returns:
-            List of documents matching crop type
-        """
-        try:
-            logger.info("ImageRAG: Using fallback text-based search")
-            
-            cursor = self.collection.find(
-                {"cropType": crop_type},
-                {"embedding": 0}  # Exclude embedding
-            ).limit(top_k)
-            
-            results = await cursor.to_list(length=top_k)
-            
-            # Add dummy similarity scores for consistency
-            for result in results:
-                result["similarity_score"] = 0.5  # Neutral score for fallback
-            
-            logger.info(f"ImageRAG: Fallback search returned {len(results)} results")
-            return results
-            
-        except Exception as e:
-            logger.error(f"ImageRAG: Fallback search failed: {str(e)}")
             return []
     
     async def query(self, image_data: str, crop_type: str, top_k: int = None) -> List[ImageRAGResult]:
         """
-        Query the ImageRAG system for similar disease images
-        
-        Args:
-            image_data: Base64 encoded image data
-            crop_type: Crop type for filtering
-            top_k: Number of similar images to return
-            
-        Returns:
-            List of ImageRAGResult objects
+        Query the ImageRAG system for similar disease images.
         """
         try:
-            await self._ensure_connection()
+            await self._ensure_index_exists()
             
             if top_k is None:
                 top_k = self.top_k
             
             logger.info(f"ImageRAG: Querying for similar images, crop type: {crop_type}, top_k: {top_k}")
             
-            # Generate embedding for query image
-            query_embedding = await self._generate_image_embedding(image_data)
+            # Generate embedding for query image using the new CLIPEmbeddings class
+            query_embedding = self.embeddings.embed_image(image_data)
             if query_embedding is None:
                 logger.error("ImageRAG: Failed to generate query embedding")
                 return []
             
-            # Perform vector search
             similar_images = await self._vector_search(query_embedding, crop_type, top_k)
             
             if not similar_images:
                 logger.warning(f"ImageRAG: No similar images found for crop type: {crop_type}")
                 return []
             
-            # Convert to ImageRAGResult objects
             results = []
             for img_doc in similar_images:
                 try:
@@ -277,119 +193,32 @@ class ImageRAGTool:
             logger.error(f"ImageRAG: Query failed: {str(e)}")
             return []
     
-    async def get_crop_statistics(self, crop_type: str) -> dict:
+    async def health_check(self) -> Dict[str, Any]:
         """
-        Get statistics about available images for a crop type
+        Check the health of ImageRAG system.
+        """
+        status = {
+            "pinecone_connection": False,
+            "vector_index_exists": False,
+            "embedding_model_configured": self.embeddings is not None,
+            "status": "unhealthy"
+        }
         
-        Args:
-            crop_type: Crop type to analyze
-            
-        Returns:
-            Dictionary with statistics
-        """
         try:
-            await self._ensure_connection()
+            indexes = self.pc.list_indexes().names
+            status["pinecone_connection"] = True
+            status["vector_index_exists"] = self.pinecone_index_name in indexes
             
-            # Count total documents for this crop type
-            total_count = await self.collection.count_documents({"cropType": crop_type})
-            
-            # Get disease class distribution
-            pipeline = [
-                {"$match": {"cropType": crop_type}},
-                {"$group": {
-                    "_id": "$class",
-                    "count": {"$sum": 1}
-                }},
-                {"$sort": {"count": -1}}
-            ]
-            
-            disease_distribution = await self.collection.aggregate(pipeline).to_list(length=None)
-            
-            # Get SME distribution
-            sme_pipeline = [
-                {"$match": {"cropType": crop_type}},
-                {"$group": {
-                    "_id": "$smeRelated",
-                    "count": {"$sum": 1}
-                }},
-                {"$sort": {"count": -1}}
-            ]
-            
-            sme_distribution = await self.collection.aggregate(sme_pipeline).to_list(length=None)
-            
-            return {
-                "crop_type": crop_type,
-                "total_images": total_count,
-                "disease_distribution": {item["_id"]: item["count"] for item in disease_distribution},
-                "sme_distribution": {item["_id"]: item["count"] for item in sme_distribution}
-            }
+            if status["vector_index_exists"]:
+                stats = self.index.describe_index_stats()
+                total_vectors = stats.total_vector_count
+                status["total_documents"] = total_vectors
+                status["status"] = "healthy" if total_vectors > 0 else "no_data"
+            else:
+                status["status"] = "unhealthy"
             
         except Exception as e:
-            logger.error(f"ImageRAG: Failed to get statistics: {str(e)}")
-            return {"error": str(e)}
-    
-    async def health_check(self) -> dict:
-        """
-        Check the health of ImageRAG system
-        
-        Returns:
-            Dictionary with health status
-        """
-        try:
-            await self._ensure_connection()
+            logger.error(f"Pinecone health check failed: {e}")
+            status["error"] = str(e)
             
-            # Test MongoDB connection
-            await self.db.command("ping")
-            
-            # Count total documents
-            total_docs = await self.collection.count_documents({})
-            
-            # Check if vector index exists (this would need to be implemented based on MongoDB setup)
-            indexes = await self.collection.list_indexes().to_list(length=None)
-            has_vector_index = any("image_vector_index" in str(idx) for idx in indexes)
-            
-            return {
-                "mongodb_connected": True,
-                "total_documents": total_docs,
-                "vector_index_exists": has_vector_index,
-                "embedding_model_configured": self.embedding_model is not None,
-                "status": "healthy" if total_docs > 0 else "no_data"
-            }
-            
-        except Exception as e:
-            logger.error(f"ImageRAG: Health check failed: {str(e)}")
-            return {
-                "mongodb_connected": False,
-                "error": str(e),
-                "status": "unhealthy"
-            }
-    
-    async def close(self):
-        """Close MongoDB connection"""
-        if self.client:
-            self.client.close()
-            logger.info("ImageRAG: MongoDB connection closed")
-    
-    def set_embedding_model(self, model):
-        """
-        Set the image embedding model (to be called when model is decided)
-        
-        Args:
-            model: The embedding model instance
-        """
-        self.embedding_model = model
-        logger.info("ImageRAG: Embedding model configured")
-    
-    def get_supported_crops(self) -> List[str]:
-        """
-        Get list of supported crop types (would be implemented based on actual data)
-        
-        Returns:
-            List of supported crop types
-        """
-        # This would typically query the database for unique crop types
-        # For now, return common crops as placeholder
-        return [
-            "tomato", "wheat", "rice", "corn", "potato", 
-            "cotton", "soybean", "apple", "grape", "citrus"
-        ]
+        return status

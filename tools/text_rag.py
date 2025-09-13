@@ -8,6 +8,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import numpy as np
 from dataclasses import dataclass
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

@@ -9,6 +9,10 @@ import tensorflow as tf
 from tensorflow import keras
 from typing import Dict, Optional, List
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

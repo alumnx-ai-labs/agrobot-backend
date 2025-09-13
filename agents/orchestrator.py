@@ -7,6 +7,10 @@ from models.schemas import WorkflowState, WorkflowStatus
 from tools.image_rag import ImageRAGTool
 from tools.image_classification import ImageClassificationTool
 from tools.text_rag import TextRAGTool
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

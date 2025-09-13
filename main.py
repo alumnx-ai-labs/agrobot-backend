@@ -8,6 +8,10 @@ import base64
 import logging
 from agents.orchestrator import CropDiseaseOrchestrator
 from models.schemas import WorkflowState, WorkflowStatus
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
