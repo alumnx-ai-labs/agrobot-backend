@@ -1,6 +1,5 @@
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import MemorySaver
 import logging
 from typing import Dict, Any
 from models.schemas import WorkflowState, WorkflowStatus
@@ -34,8 +33,8 @@ class CropDiseaseOrchestrator:
             logger.info("Orchestrator: Starting workflow execution")
             logger.info(f"Orchestrator: Initial state - crop_type: {initial_state['crop_type']}, sme_advisor: {initial_state['sme_advisor']}")
             
-            config = {"configurable": {"thread_id": "crop_analysis_session"}}
-            final_state = await self.workflow.ainvoke(initial_state, config)
+            # No config needed without memory - each request is independent
+            final_state = await self.workflow.ainvoke(initial_state)
             
             logger.info(f"Orchestrator: Workflow completed with status: {final_state['workflow_status']}")
             logger.info(f"Orchestrator: Final disease class: {final_state.get('final_disease_class')}")
@@ -90,11 +89,9 @@ class CropDiseaseOrchestrator:
         
         workflow.add_edge("text_rag", END)
         
-        # Add memory
-        memory = MemorySaver()
-        
-        logger.info("Orchestrator: Workflow graph created and compiled")
-        return workflow.compile(checkpointer=memory)
+        # Compile without memory - no checkpointer parameter
+        logger.info("Orchestrator: Workflow graph created and compiled without memory")
+        return workflow.compile()
     
     async def _orchestrator_node(self, state: WorkflowState) -> Dict[str, Any]:
         logger.info("Orchestrator: Entering orchestrator node")
@@ -109,7 +106,7 @@ class CropDiseaseOrchestrator:
         
         try:
             logger.info("Orchestrator: Starting ImageRAG query")
-            results = await self.image_rag_tool.query(state["image_data"], state["crop_type"])
+            results = await self.image_rag_tool.query(state["image_data"], state["crop_type"], top_k=5)
             
             image_rag_results = [
                 {
@@ -119,8 +116,12 @@ class CropDiseaseOrchestrator:
                     "description": r.description
                 } for r in results
             ]
+            
+            logger.info(f"Orchestrator: ImageRAG raw results count: {len(results)}")
+            logger.info(f"Orchestrator: ImageRAG processed results count: {len(image_rag_results)}")
             logger.info(f"Orchestrator: ImageRAG completed - found {len(results)} similar diseases")
-            for i, result in enumerate(results[:3]):
+            
+            for i, result in enumerate(results[:5]):
                 logger.info(f"Orchestrator: ImageRAG result {i+1}: {result.disease_name} (confidence: {result.confidence:.3f})")
             
             return {"image_rag_results": image_rag_results}

@@ -57,7 +57,7 @@ class ImageRAGTool:
             raise ValueError("Missing required API keys: PINECONE_API_KEY.")
         
         # Pinecone and embedding parameters
-        self.top_k = 10  # Default number of similar images to retrieve
+        self.top_k = 5  # Default number of similar images to retrieve
         self.similarity_threshold = 0.75  # Minimum similarity score
         self.input_size = (224, 224) # Still relevant for consistency if needed
         
