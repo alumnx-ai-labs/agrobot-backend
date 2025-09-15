@@ -104,12 +104,16 @@ async def analyze_crop_disease(
         # Prepare response based on workflow status
         status = final_state.get("workflow_status")
         
-        if status in [WorkflowStatus.CLASSIFICATION_MATCH.value, WorkflowStatus.RAG_CONSENSUS.value]:
+        if status in [WorkflowStatus.CLASSIFICATION_MATCH.value, WorkflowStatus.RAG_CONSENSUS.value, WorkflowStatus.COMPLETED.value]:
             # Confident prediction with preventive measures
+            confidence_reason = "classification_match" if status == WorkflowStatus.CLASSIFICATION_MATCH.value else "rag_consensus"
+            if status == WorkflowStatus.COMPLETED.value:
+                confidence_reason = "text_rag_completed"
+            
             response_data = {
                 "status": "confident_prediction",
                 "disease_class": final_state["final_disease_class"],
-                "confidence_reason": "classification_match" if status == WorkflowStatus.CLASSIFICATION_MATCH.value else "rag_consensus",
+                "confidence_reason": confidence_reason,
                 "disease_info": final_state.get("text_rag_results", {}),
                 "classification_result": final_state["image_classification_result"],
                 "similar_diseases": final_state["image_rag_results"][:5]
