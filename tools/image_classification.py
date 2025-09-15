@@ -9,6 +9,10 @@ import tensorflow as tf
 from tensorflow import keras
 from typing import Dict, Optional, List
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +124,19 @@ class ImageClassificationTool:
             if isinstance(labels_data, list):
                 labels = labels_data
             elif isinstance(labels_data, dict):
-                # Try common keys
-                labels = labels_data.get('labels') or labels_data.get('classes') or list(labels_data.values())
+                # Check if it's a disease_name -> index mapping (like your class_idx.json)
+                if all(isinstance(v, int) for v in labels_data.values()):
+                    # Create reverse mapping for index -> disease_name
+                    self._reverse_labels_map = {v: k for k, v in labels_data.items()}
+                    # Create ordered list by index
+                    max_idx = max(labels_data.values())
+                    labels = [None] * (max_idx + 1)
+                    for disease, idx in labels_data.items():
+                        labels[idx] = disease
+                    logger.info(f"ImageClassification: Created reverse mapping for disease indices")
+                else:
+                    # Try common keys
+                    labels = labels_data.get('labels') or labels_data.get('classes') or list(labels_data.values())
             else:
                 raise ValueError("Invalid labels file format")
             
@@ -233,6 +248,14 @@ class ImageClassificationTool:
             max_idx = np.argmax(predictions)
             max_confidence = float(predictions[max_idx])
             predicted_disease = labels[max_idx]
+
+            # Convert index to disease name if labels contains indices
+            if isinstance(predicted_disease, (int, str)) and str(predicted_disease).isdigit():
+                # Labels file maps disease names to indices, we need to reverse it
+                if hasattr(self, '_reverse_labels_map'):
+                    predicted_disease = self._reverse_labels_map.get(int(predicted_disease), f"class_{predicted_disease}")
+                else:
+                    predicted_disease = f"class_{predicted_disease}"
             
             # Create all predictions dictionary
             all_predictions = {

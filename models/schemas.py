@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
+from typing_extensions import TypedDict
+from typing import Annotated
+from operator import add
 
 class WorkflowStatus(Enum):
     """Workflow status enumeration"""
@@ -11,22 +13,19 @@ class WorkflowStatus(Enum):
     COMPLETED = "completed"
     ERROR = "error"
 
-class WorkflowState(BaseModel):
+class WorkflowState(TypedDict):
     """State model for the crop disease analysis workflow"""
     # Input data
     image_data: str  # Base64 encoded image
     crop_type: str
-    sme_advisor: str
+    sme_advisor: Optional[str]
     
     # Analysis results
-    image_rag_results: List[Dict[str, Any]] = []
-    image_classification_result: Dict[str, Any] = {}
-    final_disease_class: Optional[str] = None
-    text_rag_results: Optional[Dict[str, Any]] = None
+    image_rag_results: Annotated[List[Dict[str, Any]], add]
+    image_classification_result: Dict[str, Any]
+    final_disease_class: Optional[str]
+    text_rag_results: Optional[Dict[str, Any]]
     
     # Workflow control
-    workflow_status: str = WorkflowStatus.PROCESSING.value
-    error_message: Optional[str] = None
-    
-    class Config:
-        arbitrary_types_allowed = True
+    workflow_status: str
+    error_message: Optional[str]

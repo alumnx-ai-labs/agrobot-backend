@@ -1,0 +1,38 @@
+[
+	{
+		"cropType": "Mango",
+		"smeAdvisor": "Dr. Smith",
+		"class": "Anthracnose",
+		"text": "Anthracnose in mango is caused by the fungus Colletotrichum gloeosporioides. The disease affects leaves, twigs, flowers, and fruits. On leaves, it appears as small, dark, water-soaked spots that gradually enlarge and become irregular in shape. The spots may have a yellow halo around them."
+	},
+	{
+		"cropType": "Mango",
+		"smeAdvisor": "Dr. Johnson",
+		"class": "Anthracnose",
+		"text": "Symptoms of mango anthracnose include black lesions on fruits, which start as small dark spots and expand rapidly under humid conditions. Infected fruits may drop prematurely or develop large black areas that make them unmarketable. The fungus can also cause dieback of twigs and branches."
+	},
+	{
+		"cropType": "Mango",
+		"smeAdvisor": "Dr. Patel",
+		"class": "Anthracnose",
+		"text": "Prevention of anthracnose involves proper orchard sanitation, including removal of infected plant debris. Ensure good air circulation by proper pruning. Avoid overhead irrigation and water early in the day to allow foliage to dry quickly. Apply copper-based fungicides as preventive sprays during flowering and fruit development."
+	},
+	{
+		"cropType": "Mango",
+		"smeAdvisor": "Dr. Brown",
+		"class": "Anthracnose",
+		"text": "Treatment options for anthracnose include application of systemic fungicides such as propiconazole or azoxystrobin. For organic management, use copper sulfate or neem oil. Post-harvest treatments with hot water (52°C for 5 minutes) can reduce infection on harvested fruits. Regular monitoring and early intervention are crucial for effective management."
+	},
+	{
+		"cropType": "Mango",
+		"smeAdvisor": "Dr. Wilson",
+		"class": "Anthracnose",
+		"text": "Cultural practices for anthracnose management include selecting resistant varieties when available, maintaining proper tree spacing for air circulation, and avoiding excessive nitrogen fertilization which can increase disease susceptibility. Harvest fruits at proper maturity and handle carefully to avoid wounds that provide entry points for the pathogen."
+	},
+	{
+		"cropType": "Mango",
+		"smeAdvisor": "Dr. Garcia",
+		"class": "Anthracnose",
+		"text": "Environmental factors that favor anthracnose development include high humidity (above 95%), temperatures between 25-30°C, and prolonged leaf wetness. The disease is most severe during rainy seasons. Spores are spread by rain splash and wind. Understanding these conditions helps in timing preventive measures effectively."
+	}
+]

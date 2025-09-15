@@ -2,8 +2,10 @@ import os
 import logging
 from typing import List, Optional
 import asyncio
-import json
+from motor.motor_asyncio import AsyncIOMotorClient
 import google.generativeai as genai
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+import numpy as np
 from dataclasses import dataclass
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -31,9 +33,10 @@ class TextRAGTool:
     """
     
     def __init__(self):
-        """Initialize the TextRAG tool with Google AI and local JSON data"""
+        """Initialize the TextRAG tool with Google embeddings and MongoDB connection"""
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.json_file_path = os.path.join(os.path.dirname(__file__), "../data/textData.json")
+        self.mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+        self.embedding_model = os.getenv("TEXT_EMBEDDING_MODEL", "models/embedding-001")
         
         if not self.google_api_key:
             raise ValueError("GOOGLE_API_KEY environment variable is required")
@@ -41,24 +44,26 @@ class TextRAGTool:
         # Initialize Google AI
         genai.configure(api_key=self.google_api_key)
         
+        # Initialize embeddings
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model=self.embedding_model,
+            google_api_key=self.google_api_key
+        )
+        
+        # Initialize MongoDB client
+        self.client = None
+        self.db = None
+        self.collection = None
+        
         logger.info("TextRAGTool initialized")
     
-    def _load_json_data(self):
-        """Load data from JSON file"""
-        try:
-            with open(self.json_file_path, 'r', encoding='utf-8') as file:
-                data = json.load(file)
-            logger.info(f"Loaded {len(data)} records from JSON file")
-            return data
-        except FileNotFoundError:
-            logger.error(f"JSON file not found at {self.json_file_path}")
-            return []
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing JSON file: {str(e)}")
-            return []
-        except Exception as e:
-            logger.error(f"Error loading JSON file: {str(e)}")
-            return []
+    async def _ensure_connection(self):
+        """Ensure MongoDB connection is established"""
+        if self.client is None:
+            self.client = AsyncIOMotorClient(self.mongodb_uri)
+            self.db = self.client.get_default_database()
+            self.collection = self.db.smetextrag
+            logger.info("MongoDB connection established")
     
     async def query(self, disease_name: str, sme_advisor: str, crop_type: str = None) -> TextRAGResult:
         """
@@ -66,27 +71,35 @@ class TextRAGTool:
         
         Args:
             disease_name: The disease to search for
-            sme_advisor: SME advisor name for filtering (currently ignored)
+            sme_advisor: SME advisor name for filtering
             crop_type: Crop type for filtering (optional, can be taken from workflow state)
         
         Returns:
             TextRAGResult with disease information and preventive measures
         """
         try:
+            await self._ensure_connection()
+            
             logger.info(f"TextRAG: Querying for disease '{disease_name}', SME: '{sme_advisor}', Crop: '{crop_type}'")
             
-            # Load data from JSON file
-            all_data = self._load_json_data()
+            # Generate embedding for the disease query
+            query_embedding = await self._generate_embedding(disease_name)
             
-            if not all_data:
-                logger.warning("TextRAG: No data available in JSON file")
-                return self._create_empty_result(disease_name)
+            # Build MongoDB filter
+            mongo_filter = {
+                "smeAdvisorName": sme_advisor
+            }
             
-            # Filter data by crop_type and class (disease_name)
-            relevant_chunks = self._filter_data(all_data, disease_name, crop_type)
+            if crop_type:
+                mongo_filter["cropType"] = crop_type
+            
+            logger.info(f"TextRAG: MongoDB filter: {mongo_filter}")
+            
+            # Perform vector similarity search
+            relevant_chunks = await self._vector_search(query_embedding, mongo_filter)
             
             if not relevant_chunks:
-                logger.warning(f"TextRAG: No relevant documents found for disease '{disease_name}' and crop '{crop_type}'")
+                logger.warning(f"TextRAG: No relevant documents found for disease '{disease_name}' with given filters")
                 return self._create_empty_result(disease_name)
             
             logger.info(f"TextRAG: Found {len(relevant_chunks)} relevant chunks")
@@ -101,45 +114,66 @@ class TextRAGTool:
             logger.error(f"TextRAG: Error querying for '{disease_name}': {str(e)}")
             return self._create_error_result(disease_name, str(e))
     
-    def _filter_data(self, all_data: List[dict], disease_name: str, crop_type: str = None) -> List[dict]:
+    async def _generate_embedding(self, text: str) -> List[float]:
+        """Generate embedding for the input text"""
+        try:
+            embedding = await self.embeddings.aembed_query(text)
+            return embedding
+        except Exception as e:
+            logger.error(f"TextRAG: Embedding generation failed: {str(e)}")
+            raise
+    
+    async def _vector_search(self, query_embedding: List[float], mongo_filter: dict, top_k: int = 10) -> List[dict]:
         """
-        Filter data by crop type and disease class
+        Perform vector similarity search in MongoDB
         
         Args:
-            all_data: All data from JSON file
-            disease_name: Disease class to filter by
-            crop_type: Crop type to filter by (optional)
+            query_embedding: Query vector
+            mongo_filter: MongoDB filter criteria
+            top_k: Number of top results to return
             
         Returns:
             List of relevant document chunks
         """
         try:
-            filtered_data = []
-            
-            for item in all_data:
-                # Check if class matches (case-insensitive)
-                if item.get('class', '').lower() != disease_name.lower():
-                    continue
-                    
-                # Check if crop type matches (case-insensitive) if provided
-                if crop_type and item.get('cropType', '').lower() != crop_type.lower():
-                    continue
-                    
-                # Transform to match expected format
-                filtered_item = {
-                    'text': item.get('text', ''),
-                    'cropType': item.get('cropType', ''),
-                    'smeAdvisorName': item.get('smeAdvisor', ''),
-                    'class': item.get('class', ''),
-                    'score': 1.0  # Set a default score since we're not using vector search
+            # MongoDB vector search pipeline
+            pipeline = [
+                {
+                    "$vectorSearch": {
+                        "index": "vector_index",  # Assumes vector index is created
+                        "path": "embedding",
+                        "queryVector": query_embedding,
+                        "numCandidates": 100,
+                        "limit": top_k
+                    }
+                },
+                {
+                    "$match": mongo_filter
+                },
+                {
+                    "$project": {
+                        "text": 1,
+                        "pdfName": 1,
+                        "cropType": 1,
+                        "smeAdvisorName": 1,
+                        "score": {"$meta": "vectorSearchScore"}
+                    }
                 }
-                filtered_data.append(filtered_item)
+            ]
             
-            logger.info(f"TextRAG: Filtered {len(filtered_data)} records from {len(all_data)} total records")
-            return filtered_data
+            # Execute aggregation pipeline
+            cursor = self.collection.aggregate(pipeline)
+            results = await cursor.to_list(length=top_k)
+            
+            # Filter by minimum similarity threshold
+            threshold = 0.7
+            filtered_results = [doc for doc in results if doc.get('score', 0) >= threshold]
+            
+            logger.info(f"TextRAG: Vector search returned {len(results)} results, {len(filtered_results)} above threshold")
+            return filtered_results
             
         except Exception as e:
-            logger.error(f"TextRAG: Data filtering failed: {str(e)}")
+            logger.error(f"TextRAG: Vector search failed: {str(e)}")
             return []
     
     async def _generate_response(self, disease_name: str, relevant_chunks: List[dict]) -> TextRAGResult:
@@ -156,7 +190,7 @@ class TextRAGTool:
         try:
             # Prepare context from relevant chunks
             context = "\n\n".join([
-                f"Source: {chunk.get('smeAdvisorName', 'Unknown SME')} - {chunk.get('cropType', 'Unknown Crop')} (Score: {chunk.get('score', 0):.2f})\n{chunk.get('text', '')}"
+                f"Source: {chunk.get('pdfName', 'Unknown')} (Score: {chunk.get('score', 0):.2f})\n{chunk.get('text', '')}"
                 for chunk in relevant_chunks
             ])
             
@@ -192,7 +226,7 @@ Ensure all information is specific to {disease_name} and based on the provided e
             parsed_info = self._parse_structured_response(response_text)
             
             # Extract source documents
-            source_documents = list(set([f"{chunk.get('smeAdvisorName', 'Unknown SME')} - {chunk.get('cropType', 'Unknown Crop')}" for chunk in relevant_chunks]))
+            source_documents = list(set([chunk.get('pdfName', 'Unknown') for chunk in relevant_chunks]))
             
             # Calculate confidence score based on number of relevant chunks and their scores
             avg_score = sum([chunk.get('score', 0) for chunk in relevant_chunks]) / len(relevant_chunks)
@@ -280,3 +314,9 @@ Ensure all information is specific to {disease_name} and based on the provided e
             source_documents=[],
             confidence_score=0.0
         )
+    
+    async def close(self):
+        """Close MongoDB connection"""
+        if self.client:
+            self.client.close()
+            logger.info("TextRAG: MongoDB connection closed")
