@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 # Please update these global variables with your specific values.
 # The script will use these values for all images in the specified folder.
 
-input_folder = "/path/to/your/image/folder"  # Path to the folder containing images
-image_class = "powdery_mildew"            # The class of all images in the folder
-image_source = "Farmer_Upload"            # The source of the images (e.g., 'Farmer_Upload')
-crop_type = "tomato"                      # The crop type for all images
-sme_related = "Dr. Jane Doe"              # The SME related to these images
+input_folder = "/media/user001/Expansion/work env files/direct code folders/data for mango/archive (6)/train/Sooty_Mould"  # Path to the folder containing images
+image_class = "Sooty_Mould"            # The class of all images in the folder
+image_source = "train_Dataset"            # The source of the images (e.g., 'Farmer_Upload')
+crop_type = "Mango"                      # The crop type for all images
+sme_related = ""              # The SME related to these images
 
 # ======================================================
 
@@ -59,7 +59,7 @@ embeddings = CLIPEmbeddings()
 async def ensure_index_exists():
     """Ensure Pinecone index exists, create if not."""
     try:
-        existing_indexes = pc.list_indexes().names
+        existing_indexes = pc.list_indexes().names()
         if PINECONE_INDEX_NAME not in existing_indexes:
             logger.info(f"Creating Pinecone index: {PINECONE_INDEX_NAME}")
             pc.create_index(
@@ -139,7 +139,7 @@ async def ingest_folder_data(
 
 async def main():
     """Main function to run the folder ingestion process."""
-    if not os.gh.isdir(input_folder):
+    if not os.path.isdir(input_folder):
         logger.error(f"The provided input folder '{input_folder}' does not exist.")
         return
     

@@ -1,7 +1,7 @@
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body
 from fastapi.responses import JSONResponse
 import uvicorn
-from typing import Annotated
+from typing import Annotated, Optional
 from PIL import Image
 import io
 import base64
@@ -9,7 +9,8 @@ import logging
 from agents.orchestrator import CropDiseaseOrchestrator
 from models.schemas import WorkflowState, WorkflowStatus
 from dotenv import load_dotenv
-
+from pydantic import BaseModel
+from tools.text_rag import TextRAGTool
 
 load_dotenv()
 
@@ -25,6 +26,9 @@ app = FastAPI(
 
 # Initialize orchestrator
 orchestrator = CropDiseaseOrchestrator()
+
+# Initialize TextRAGTool
+text_rag_tool = TextRAGTool()
 
 def process_image(image_file: UploadFile) -> str:
     """Process uploaded image and convert to base64"""
@@ -49,7 +53,7 @@ def process_image(image_file: UploadFile) -> str:
 async def analyze_crop_disease(
     image: Annotated[UploadFile, File(description="Image of the crop to analyze")],
     cropType: Annotated[str, Form(description="Type of crop (e.g., tomato, wheat, rice)")],
-    smeAdvisor: Annotated[str, Form(description="Subject Matter Expert advisor name")]
+    smeAdvisor: Annotated[Optional[str], Form(description="Subject Matter Expert advisor name (optional)")] = None
 ):
     """
     Analyze crop disease from uploaded image using agentic AI workflow
@@ -62,14 +66,11 @@ async def analyze_crop_disease(
     """
     
     try:
-        logger.info(f"New request: cropType={cropType}, smeAdvisor={smeAdvisor}")
+        logger.info(f"New request: cropType={cropType}, smeAdvisor={smeAdvisor or 'None (optional)'}")
         
         # Validate inputs
         if not cropType.strip():
             raise HTTPException(status_code=400, detail="cropType is required")
-        
-        if not smeAdvisor.strip():
-            raise HTTPException(status_code=400, detail="smeAdvisor is required")
         
         if not image.filename:
             raise HTTPException(status_code=400, detail="Image file is required")
@@ -81,7 +82,7 @@ async def analyze_crop_disease(
         initial_state = WorkflowState(
             image_data=image_data,
             crop_type=cropType.strip(),
-            sme_advisor=smeAdvisor.strip(),
+            sme_advisor=smeAdvisor.strip() if smeAdvisor else None,
             image_rag_results=[],
             image_classification_result={},
             final_disease_class=None,
@@ -144,6 +145,55 @@ async def analyze_crop_disease(
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# New Pydantic model for the request body
+class DiseaseConfirmation(BaseModel):
+    disease_class: str
+    sme_advisor: Optional[str] = None
+    crop_type: Optional[str] = None
+
+@app.post("/confirm-disease")
+async def confirm_disease(
+    confirmation_data: Annotated[DiseaseConfirmation, Body(description="Disease and SME details to confirm")]
+):
+    """
+    Confirms a disease and retrieves detailed information from the TextRAG system.
+    """
+    logger.info(f"New confirmation request for disease: {confirmation_data.disease_class}")
+    try:
+        # Call the TextRAG tool to get relevant information
+        result = await text_rag_tool.query(
+            disease_name=confirmation_data.disease_class,
+            sme_advisor=confirmation_data.sme_advisor,
+            crop_type=confirmation_data.crop_type
+        )
+        
+        # Check if the query was successful
+        if result.symptoms.startswith("Error"):
+            raise HTTPException(
+                status_code=500,
+                detail=result.symptoms
+            )
+            
+        return JSONResponse(content={
+            "status": "success",
+            "disease_info": {
+                "disease_name": result.disease_name,
+                "symptoms": result.symptoms,
+                "prevention": result.prevention,
+                "treatment": result.treatment,
+                "additional_info": result.additional_info,
+                "source_documents": result.source_documents,
+                "confidence_score": result.confidence_score
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing confirmation request: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 
 @app.get("/health")
 async def health_check():

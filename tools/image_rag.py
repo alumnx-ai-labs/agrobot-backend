@@ -87,7 +87,7 @@ class ImageRAGTool:
     async def _ensure_index_exists(self):
         """Ensure Pinecone index exists, create if not."""
         try:
-            existing_indexes = self.pc.list_indexes().names
+            existing_indexes = self.pc.list_indexes().names()
             if self.pinecone_index_name not in existing_indexes:
                 logger.info(f"Creating Pinecone index: {self.pinecone_index_name}")
                 self.pc.create_index(
