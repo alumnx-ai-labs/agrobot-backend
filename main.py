@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Body
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 from typing import Annotated, Optional
 from PIL import Image
@@ -22,6 +23,14 @@ app = FastAPI(
     title="Crop Disease Analysis API",
     description="AI-powered crop disease detection and prevention recommendations",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins - only for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize orchestrator
@@ -120,13 +129,23 @@ async def analyze_crop_disease(
             }
             
         elif status == WorkflowStatus.UNCERTAIN.value:
-            # Uncertain - return top 5 possibilities
+            # Uncertain - return top 5 possibilities with image handling
+            top_possibilities = final_state["image_rag_results"][:5]
+            
+            # Ensure image availability is properly marked
+            for possibility in top_possibilities:
+                if not possibility.get("has_image"):
+                    possibility["has_image"] = False
+                if not possibility.get("image_url"):
+                    possibility["image_url"] = None
+            
             response_data = {
                 "status": "uncertain_prediction",
                 "message": "Unable to determine disease class with confidence",
-                "top_possibilities": final_state["image_rag_results"][:5],
+                "top_possibilities": top_possibilities,
                 "classification_result": final_state["image_classification_result"],
-                "recommendation": "Consider consulting with multiple experts or obtaining additional images"
+                "recommendation": "Consider consulting with multiple experts or obtaining additional images",
+                "images_available": any(p.get("has_image", False) for p in top_possibilities)
             }
             
         else:
