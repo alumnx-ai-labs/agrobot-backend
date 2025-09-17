@@ -112,8 +112,9 @@ class CropDiseaseOrchestrator:
                 {
                     "disease_name": r.disease_name,
                     "confidence": r.confidence,
-                    "image_url": r.image_url,
-                    "description": r.description
+                    "image_url": r.image_url if hasattr(r, 'image_url') and r.image_url else None,
+                    "description": r.description,
+                    "has_image": bool(hasattr(r, 'image_url') and r.image_url)
                 } for r in results
             ]
             
